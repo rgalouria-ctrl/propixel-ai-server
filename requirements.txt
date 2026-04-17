@@ -4,4 +4,5 @@ Pillow
 numpy<2.0.0
 tflite-runtime
 mediapipe
+opencv-python-headless
 python-multipart
