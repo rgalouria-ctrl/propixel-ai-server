@@ -6,9 +6,10 @@ from io import BytesIO
 from PIL import Image
 import numpy as np
 import tflite_runtime.interpreter as tflite
-# 🟢 FIX: Explicit import for headless environment
-from mediapipe.python.solutions import face_detection as mp_face_detection
 import math
+
+# 🟢 FIX: Headless server ke liye explicit import (Ye line purane code me nahi thi)
+import mediapipe.python.solutions.face_detection as mp_face_detection
 
 app = FastAPI()
 
