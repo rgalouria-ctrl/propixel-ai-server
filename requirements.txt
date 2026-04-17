@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 Pillow
-numpy
+numpy<2.0.0
 tflite-runtime
 mediapipe
 python-multipart
