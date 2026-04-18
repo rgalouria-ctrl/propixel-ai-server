@@ -7,7 +7,7 @@ from PIL import Image
 import numpy as np
 import tflite_runtime.interpreter as tflite
 import math
-import mediapipe as mp
+import cv2
 
 app = FastAPI()
 
@@ -19,13 +19,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 1. Load your TFLite Model (Same module)
 interpreter = tflite.Interpreter(model_path="mobilefacenet.tflite")
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-mp_face_detection = mp.solutions.face_detection
-face_detector = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+# 2. Load OpenCV Face Detector (100% stable on Linux/Render)
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 class ImageData(BaseModel):
     image: str
@@ -41,21 +42,23 @@ def get_embedding(data: ImageData):
         img = Image.open(BytesIO(img_data)).convert('RGB')
         img_np = np.array(img)
 
-        results = face_detector.process(img_np)
-        if not results.detections:
+        # Detect face using OpenCV instead of MediaPipe
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
             raise HTTPException(status_code=400, detail="Face not detected")
 
-        detection = results.detections[0]
-        bboxC = detection.location_data.relative_bounding_box
-        h, w, _ = img_np.shape
-        x, y, bw, bh = int(bboxC.xmin * w), int(bboxC.ymin * h), int(bboxC.width * w), int(bboxC.height * h)
+        # Get the first face detected
+        x, y, bw, bh = faces[0]
 
+        # Crop logic (Same as your JS code)
         cx, cy = x + (bw // 2), y + (bh // 2)
         square_size = int(max(bw, bh) * 1.5)
         sx, sy = cx - (square_size // 2), int(cy - (square_size // 2) - (square_size * 0.05))
         
         crop_img = Image.new("RGB", (square_size, square_size), (0, 0, 0))
-        box = (max(0, sx), max(0, sy), min(w, sx + square_size), min(h, sy + square_size))
+        box = (max(0, sx), max(0, sy), min(img.width, sx + square_size), min(img.height, sy + square_size))
         region = img.crop(box)
         crop_img.paste(region, (max(0, -sx), max(0, -sy)))
         
@@ -64,10 +67,12 @@ def get_embedding(data: ImageData):
         tensor = (tensor - 127.5) / 127.5
         tensor = np.expand_dims(tensor, axis=0)
 
+        # Predict using mobilefacenet.tflite
         interpreter.set_tensor(input_details[0]['index'], tensor)
         interpreter.invoke()
         embeddings = interpreter.get_tensor(output_details[0]['index'])[0]
 
+        # Normalize exactly like JS
         magnitude = math.sqrt(np.sum(np.square(embeddings)))
         normalized = (embeddings / magnitude).tolist()
 
