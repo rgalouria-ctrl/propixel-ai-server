@@ -3,6 +3,6 @@ uvicorn
 Pillow
 numpy<2.0.0
 tflite-runtime
-mediapipe
+mediapipe==0.9.0.1
 opencv-python-headless
 python-multipart
