@@ -8,8 +8,8 @@ import numpy as np
 import tflite_runtime.interpreter as tflite
 import math
 
-# 🟢 FIX: Headless server ke liye explicit import (Ye line purane code me nahi thi)
-import mediapipe.python.solutions.face_detection as mp_face_detection
+# 🟢 Wapas Standard Import (Kyunki OpenCV ab successfully install ho chuka hai)
+import mediapipe as mp
 
 app = FastAPI()
 
@@ -26,6 +26,8 @@ interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
+# MediaPipe Face Detection
+mp_face_detection = mp.solutions.face_detection
 face_detector = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
 class ImageData(BaseModel):
