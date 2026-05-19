@@ -5,5 +5,5 @@ opencv-python-headless
 mediapipe==0.10.9
 protobuf==3.20.3
 tflite-runtime
-numpy
+numpy==1.26.4
 Pillow
