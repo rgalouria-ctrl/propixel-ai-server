@@ -7,7 +7,6 @@ import tflite_runtime.interpreter as tflite
 import math
 import cv2
 import mediapipe as mp
-import os
 
 app = FastAPI()
 
@@ -61,7 +60,7 @@ def get_embedding(data: ImageData):
         mp_x, mp_y = int(bbox.xmin * img_w), int(bbox.ymin * img_h)
         mp_w, mp_h = int(bbox.width * img_w), int(bbox.height * img_h)
 
-        # 3. Simulate ML Kit Bounding Box (Expand & Shift exactly like JS/Dart)
+        # 3. FIX: Simulate ML Kit Bounding Box (Expand & Shift exactly like JS/Dart)
         mlKitBoxW = mp_w * 1.15
         mlKitBoxH = mp_h * 1.35
         mlKitBoxX = mp_x - (mp_w * 0.075)
@@ -70,7 +69,7 @@ def get_embedding(data: ImageData):
         centerX = mlKitBoxX + (mlKitBoxW / 2)
         centerY = mlKitBoxY + (mlKitBoxH / 2)
 
-        # 4. 1.35x Perfect Square Math
+        # 4. FIX: 1.35x Perfect Square Math
         maxSize = max(mlKitBoxW, mlKitBoxH)
         squareSize = int(maxSize * 1.35)
 
@@ -98,7 +97,7 @@ def get_embedding(data: ImageData):
         # Initial Crop
         cropped_face = img_rgb[y:y+squareSize, x:x+squareSize]
 
-        # 5. Face Alignment (Rotation via Eye Keypoints)
+        # 5. FIX: Face Alignment (Rotation via Eye Keypoints)
         keypoints = detection.location_data.relative_keypoints
         if len(keypoints) >= 2:
             right_eye = keypoints[0] # Image left (Person's right)
@@ -118,7 +117,7 @@ def get_embedding(data: ImageData):
                 M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
                 cropped_face = cv2.warpAffine(cropped_face, M, (squareSize, squareSize), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
-        # 6. Resize to 160x160 and Normalize (/ 128.0)
+        # 6. FIX: Resize to 160x160 and Normalize (/ 128.0)
         resized_face = cv2.resize(cropped_face, (160, 160))
         tensor = resized_face.astype(np.float32)
         tensor = (tensor - 127.5) / 128.0
@@ -138,9 +137,3 @@ def get_embedding(data: ImageData):
     except Exception as e:
         print("Backend Error:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
-
-# Bind to Render's Port dynamically
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
