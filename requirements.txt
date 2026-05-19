@@ -4,5 +4,5 @@ pydantic
 opencv-python-headless
 mediapipe
 tflite-runtime
-numpy
+numpy<2.0.0
 Pillow
