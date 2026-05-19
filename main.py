@@ -2,12 +2,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import base64
-from io import BytesIO
-from PIL import Image
 import numpy as np
 import tflite_runtime.interpreter as tflite
 import math
-import cv2  # 🟢 Sirf OpenCV use kar rahe hain, No MediaPipe
+import cv2
+import mediapipe as mp
 
 app = FastAPI()
 
@@ -19,65 +18,122 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Load TFLite Model
-interpreter = tflite.Interpreter(model_path="mobilefacenet.tflite")
+print("⏳ Loading Custom FaceNet 512D Model...")
+interpreter = tflite.Interpreter(model_path="custom_facenet_512.tflite")
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-# 2. Load OpenCV Face Detector (Stable on Render)
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+print("⏳ Loading MediaPipe Vision AI...")
+mp_face_detection = mp.solutions.face_detection
+# 0.5 confidence just like the web/app logic
+face_detector = mp_face_detection.FaceDetection(min_detection_confidence=0.5)
 
 class ImageData(BaseModel):
     image: str
 
 @app.get("/wakeup")
 def wakeup():
-    return {"status": "Server is awake and ready!"}
+    return {"status": "Server is awake and ready! AI Models loaded."}
 
 @app.post("/face-embedding")
 def get_embedding(data: ImageData):
     try:
-        # Decode Base64 Image
+        # 1. Decode Base64 Image to OpenCV Format
         img_data = base64.b64decode(data.image.split(',')[1] if ',' in data.image else data.image)
-        img = Image.open(BytesIO(img_data)).convert('RGB')
-        img_np = np.array(img)
+        img_np = np.frombuffer(img_data, np.uint8)
+        img_cv = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
+        img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+        img_h, img_w = img_rgb.shape[:2]
 
-        # Detect face using OpenCV
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        # 2. Detect face using MediaPipe
+        results = face_detector.process(img_rgb)
         
-        if len(faces) == 0:
+        if not results.detections:
             raise HTTPException(status_code=400, detail="Face not detected. Ensure clear lighting.")
 
-        # Get the first face detected
-        x, y, bw, bh = faces[0]
+        # Get the first face
+        detection = results.detections[0]
+        bbox = detection.location_data.relative_bounding_box
+        
+        # Original MediaPipe Bounding Box
+        mp_x, mp_y = int(bbox.xmin * img_w), int(bbox.ymin * img_h)
+        mp_w, mp_h = int(bbox.width * img_w), int(bbox.height * img_h)
 
-        # Crop and Resize logic (Exact match with JS)
-        cx, cy = x + (bw // 2), y + (bh // 2)
-        square_size = int(max(bw, bh) * 1.5)
-        sx, sy = cx - (square_size // 2), int(cy - (square_size // 2) - (square_size * 0.05))
-        
-        crop_img = Image.new("RGB", (square_size, square_size), (0, 0, 0))
-        box = (max(0, sx), max(0, sy), min(img.width, sx + square_size), min(img.height, sy + square_size))
-        region = img.crop(box)
-        crop_img.paste(region, (max(0, -sx), max(0, -sy)))
-        
-        crop_img = crop_img.resize((112, 112))
-        tensor = np.array(crop_img, dtype=np.float32)
-        tensor = (tensor - 127.5) / 127.5
+        # 3. FIX: Simulate ML Kit Bounding Box (Expand & Shift exactly like JS/Dart)
+        mlKitBoxW = mp_w * 1.15
+        mlKitBoxH = mp_h * 1.35
+        mlKitBoxX = mp_x - (mp_w * 0.075)
+        mlKitBoxY = mp_y - (mp_h * 0.20)
+
+        centerX = mlKitBoxX + (mlKitBoxW / 2)
+        centerY = mlKitBoxY + (mlKitBoxH / 2)
+
+        # 4. FIX: 1.35x Perfect Square Math
+        maxSize = max(mlKitBoxW, mlKitBoxH)
+        squareSize = int(maxSize * 1.35)
+
+        if squareSize > img_w: squareSize = img_w
+        if squareSize > img_h: squareSize = img_h
+
+        x = int(centerX - squareSize / 2)
+        y = int(centerY - squareSize / 2)
+
+        # Boundary Clamping
+        if x < 0: x = 0
+        if y < 0: y = 0
+        if x + squareSize > img_w: x = img_w - squareSize
+        if y + squareSize > img_h: y = img_h - squareSize
+
+        if x < 0:
+            squareSize += x
+            x = 0
+        if y < 0:
+            squareSize += y
+            y = 0
+        if squareSize > img_w: squareSize = img_w
+        if squareSize > img_h: squareSize = img_h
+
+        # Initial Crop
+        cropped_face = img_rgb[y:y+squareSize, x:x+squareSize]
+
+        # 5. FIX: Face Alignment (Rotation via Eye Keypoints)
+        keypoints = detection.location_data.relative_keypoints
+        if len(keypoints) >= 2:
+            right_eye = keypoints[0] # Image left (Person's right)
+            left_eye = keypoints[1]  # Image right (Person's left)
+            
+            rx, ry = int(right_eye.x * img_w), int(right_eye.y * img_h)
+            lx, ly = int(left_eye.x * img_w), int(left_eye.y * img_h)
+            
+            dx = lx - rx
+            dy = ly - ry
+            angle_rad = math.atan2(dy, dx)
+            angle_deg = math.degrees(angle_rad)
+            
+            # Rotate if head is tilted more than 3 degrees
+            if abs(angle_deg) > 3:
+                center = (squareSize // 2, squareSize // 2)
+                M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+                cropped_face = cv2.warpAffine(cropped_face, M, (squareSize, squareSize), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+        # 6. FIX: Resize to 160x160 and Normalize (/ 128.0)
+        resized_face = cv2.resize(cropped_face, (160, 160))
+        tensor = resized_face.astype(np.float32)
+        tensor = (tensor - 127.5) / 128.0
         tensor = np.expand_dims(tensor, axis=0)
 
-        # Predict using mobilefacenet.tflite
+        # 7. Predict using custom_facenet_512.tflite
         interpreter.set_tensor(input_details[0]['index'], tensor)
         interpreter.invoke()
         embeddings = interpreter.get_tensor(output_details[0]['index'])[0]
 
-        # Normalize 
+        # 8. L2 Normalize Array to exactly match Dart
         magnitude = math.sqrt(np.sum(np.square(embeddings)))
         normalized = (embeddings / magnitude).tolist()
 
         return {"embedding": normalized}
 
     except Exception as e:
+        print("Backend Error:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
