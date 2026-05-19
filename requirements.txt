@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-Pillow
-numpy<2.0.0
-tflite-runtime
+pydantic
 opencv-python-headless
-python-multipart
+mediapipe
+tflite-runtime
+numpy
+Pillow
